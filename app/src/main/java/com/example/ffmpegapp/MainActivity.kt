@@ -48,6 +48,10 @@ import com.arthenica.ffmpegkit.FFprobeKit
 import com.arthenica.ffmpegkit.ReturnCode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.ffmpegapp.ui.main.MainScreenViewModel
+import com.example.ffmpegapp.data.DefaultDataRepository
 
 @OptIn(ExperimentalFoundationStyleApi::class)
 object ComponentStyles {
@@ -107,13 +111,13 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun FFmpegScreen() {
     val context = LocalContext.current
+    val viewModel: MainScreenViewModel = viewModel { MainScreenViewModel(DefaultDataRepository(context.applicationContext)) }
     val coroutineScope = rememberCoroutineScope()
 
     var inputUri by remember { mutableStateOf<Uri?>(null) }
-    var outputUri by remember { mutableStateOf<Uri?>(null) }
+    val outputUri by viewModel.outputDirectoryUri.collectAsStateWithLifecycle()
     var inputFileName by remember { mutableStateOf<String?>(null) }
-    var outputFileName by remember { mutableStateOf<String?>(null) }
-    var userTypedFilename by remember { mutableStateOf("output.mp4") }
+    val outputFileName = outputUri?.let { DocumentFile.fromSingleUri(context, it)?.name }
 
     var trimStartTime by remember { mutableStateOf("") }
     var trimEndTime by remember { mutableStateOf("") }
@@ -199,15 +203,12 @@ fun FFmpegScreen() {
     }
 
     val outputLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocumentTree()
+        contract = ActivityResultContracts.CreateDocument("video/mp4")
     ) { uri: Uri? ->
-        outputUri = uri
-        if (uri != null) {
-            outputFileName = getPathFromUri(context, uri)
-        }
+        viewModel.onDirectorySelected(uri, context)
     }
     
-    val canRun = inputUri != null && outputUri != null && userTypedFilename.isNotBlank() && !isProcessing
+    val canRun = inputUri != null && outputUri != null && !isProcessing
     val runFfmpegAction = {
         val currentInputUri = inputUri
         val currentOutputUri = outputUri
@@ -217,41 +218,34 @@ fun FFmpegScreen() {
             statusText = "Processing..."
             val inputSafUrl = FFmpegKitConfig.getSafParameterForRead(context, currentInputUri)
 
-            val dir = DocumentFile.fromTreeUri(context, currentOutputUri)
-            val newFile = dir?.createFile("video/mp4", userTypedFilename)
-            if (newFile != null) {
-                val outputSafUrl = FFmpegKitConfig.getSafParameterForWrite(context, newFile.uri)
-                val command = buildFfmpegCommand(trimStartTime, trimEndTime, inputSafUrl, outputSafUrl)
+            val outputSafUrl = FFmpegKitConfig.getSafParameterForWrite(context, currentOutputUri)
+            val command = buildFfmpegCommand(trimStartTime, trimEndTime, inputSafUrl, outputSafUrl)
 
-                FFmpegKit.executeAsync(
-                    command,
-                    { session ->
-                        val returnCode = session.getReturnCode()
-                        if (ReturnCode.isSuccess(returnCode)) {
-                            statusText = "Completed"
-                        } else if (ReturnCode.isCancel(returnCode)) {
-                            statusText = "Cancelled"
-                        } else {
-                            statusText = "Failed (Code: ${returnCode?.value})"
-                            Log.e("FFmpegApp", "FFmpeg process failed with rc: ${returnCode?.value}")
-                            Log.e("FFmpegApp", "Fail Stack Trace: ${session.getFailStackTrace()}")
-                            Log.e("FFmpegApp", "Output Logs: \n${session.getAllLogsAsString()}")
-                        }
-                        isProcessing = false
-                    },
-                    { log -> },
-                    { statistics ->
-                        val timeInMilliseconds = statistics.time.toFloat()
-                        if (timeInMilliseconds > 0f && mediaDuration > 0f) {
-                            val timeInSeconds = timeInMilliseconds / 1000f
-                            currentProgress = (timeInSeconds / mediaDuration).coerceIn(0f, 1f)
-                        }
+            FFmpegKit.executeAsync(
+                command,
+                { session ->
+                    val returnCode = session.getReturnCode()
+                    if (ReturnCode.isSuccess(returnCode)) {
+                        statusText = "Completed"
+                    } else if (ReturnCode.isCancel(returnCode)) {
+                        statusText = "Cancelled"
+                    } else {
+                        statusText = "Failed (Code: ${returnCode?.value})"
+                        Log.e("FFmpegApp", "FFmpeg process failed with rc: ${returnCode?.value}")
+                        Log.e("FFmpegApp", "Fail Stack Trace: ${session.getFailStackTrace()}")
+                        Log.e("FFmpegApp", "Output Logs: \n${session.getAllLogsAsString()}")
                     }
-                )
-            } else {
-                isProcessing = false
-                statusText = "Failed to create output file"
-            }
+                    isProcessing = false
+                },
+                { log -> },
+                { statistics ->
+                    val timeInMilliseconds = statistics.time.toFloat()
+                    if (timeInMilliseconds > 0f && mediaDuration > 0f) {
+                        val timeInSeconds = timeInMilliseconds / 1000f
+                        currentProgress = (timeInSeconds / mediaDuration).coerceIn(0f, 1f)
+                    }
+                }
+            )
         }
     }
 
@@ -395,30 +389,22 @@ fun FFmpegScreen() {
                     }
                     Spacer(modifier = Modifier.height(16.dp))
                     Button(
-                        onClick = { outputLauncher.launch(null) },
+                        onClick = { outputLauncher.launch("output.mp4") },
                         enabled = !isProcessing,
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Icon(Icons.Default.Folder, contentDescription = null)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Choose Output Directory")
+                        Text("Choose Save Location")
                     }
                     if (outputFileName != null) {
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = "Dir: $outputFileName",
+                            text = "File: $outputFileName",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    Spacer(modifier = Modifier.height(16.dp))
-                    OutlinedTextField(
-                        value = userTypedFilename,
-                        onValueChange = { if (!isProcessing) userTypedFilename = it },
-                        label = { Text("Output Filename") },
-                        modifier = Modifier.fillMaxWidth(),
-                        enabled = !isProcessing
-                    )
                 }
             }
 
@@ -459,7 +445,7 @@ fun FFmpegScreen() {
 fun buildFfmpegCommand(startTime: String, endTime: String, inputUrl: String, outputUrl: String): String {
     val ssPart = if (startTime.isNotBlank()) "-ss $startTime " else ""
     val toPart = if (endTime.isNotBlank()) "-to $endTime " else ""
-    return "$ssPart$toPart-i $inputUrl -c:v libx264 -y $outputUrl"
+    return "$ssPart$toPart-i $inputUrl -c:v libx264 -f mp4 -y $outputUrl"
 }
 
 fun formatDuration(durationSec: Float): String {

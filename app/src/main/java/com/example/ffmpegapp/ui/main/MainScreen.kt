@@ -15,9 +15,10 @@ import com.example.ffmpegapp.theme.FFmpegAppTheme
 @Composable
 fun MainScreen(
   onItemClick: (NavKey) -> Unit,
-  modifier: Modifier = Modifier,
-  viewModel: MainScreenViewModel = viewModel { MainScreenViewModel(DefaultDataRepository()) },
+  modifier: Modifier = Modifier
 ) {
+  val context = androidx.compose.ui.platform.LocalContext.current
+  val viewModel: MainScreenViewModel = viewModel { MainScreenViewModel(DefaultDataRepository(context.applicationContext)) }
   val state by viewModel.uiState.collectAsStateWithLifecycle()
   when (state) {
     MainScreenUiState.Loading -> {
