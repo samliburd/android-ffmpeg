@@ -1,0 +1,43 @@
+# OS files
+.DS_Store
+Thumbs.db
+
+# Android Studio / IntelliJ
+*.iml
+.idea/*
+!.idea/codeStyles/
+!.idea/runConfigurations/
+
+# Gradle
+.gradle/
+/build/
+/*/build/
+/captures/
+.gradletasknamecache
+
+# Native / NDK
+.cxx/
+.externalNativeBuild/
+
+# Local config (machine-specific, never commit)
+local.properties
+
+# Signing (never commit real keystores)
+*.jks
+*.keystore
+
+# Build outputs
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# Logs
+*.log
+*.hprof
+
+# Antigravity IDE / agent artifacts
+.agents/
+
+# Project-specific exclusions
+/ffmpeg-kit-next/
