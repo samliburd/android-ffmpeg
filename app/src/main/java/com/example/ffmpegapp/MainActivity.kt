@@ -56,6 +56,7 @@ fun CustomTrimTextField(
     label: String
 ) {
     val interactionSource = remember { MutableInteractionSource() }
+    
     val styleState = rememberUpdatedStyleState(interactionSource) {}
     Column(modifier = Modifier.padding(vertical = 8.dp)) {
         Text(label, style = MaterialTheme.typography.labelSmall)
