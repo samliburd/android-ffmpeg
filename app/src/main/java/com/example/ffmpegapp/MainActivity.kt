@@ -25,6 +25,15 @@ import androidx.compose.foundation.style.Style
 import androidx.compose.foundation.style.styleable
 import androidx.compose.foundation.style.rememberUpdatedStyleState
 import androidx.compose.material3.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.ContentCut
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Movie
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -53,10 +62,11 @@ object ComponentStyles {
 fun CustomTrimTextField(
     value: String,
     onValueChange: (String) -> Unit,
-    label: String
+    label: String,
+    enabled: Boolean = true
 ) {
     val interactionSource = remember { MutableInteractionSource() }
-    
+
     val styleState = rememberUpdatedStyleState(interactionSource) {}
     Column(modifier = Modifier.padding(vertical = 8.dp)) {
         Text(label, style = MaterialTheme.typography.labelSmall)
@@ -66,11 +76,12 @@ fun CustomTrimTextField(
             onValueChange = onValueChange,
             interactionSource = interactionSource,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
+            enabled = enabled,
             modifier = Modifier
                 .fillMaxWidth()
                 .styleable(styleState, ComponentStyles.inputFieldStyle, Style)
                 .padding(16.dp),
-            textStyle = TextStyle(color = Color.Black)
+            textStyle = TextStyle(color = if (enabled) Color.Black else Color.Gray)
         )
     }
 }
@@ -92,21 +103,22 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FFmpegScreen() {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
-    
+
     var inputUri by remember { mutableStateOf<Uri?>(null) }
     var outputUri by remember { mutableStateOf<Uri?>(null) }
     var inputFileName by remember { mutableStateOf<String?>(null) }
     var outputFileName by remember { mutableStateOf<String?>(null) }
     var userTypedFilename by remember { mutableStateOf("output.mp4") }
-    
+
     var trimStartTime by remember { mutableStateOf("") }
     var trimEndTime by remember { mutableStateOf("") }
     var isTrimExpanded by remember { mutableStateOf(false) }
-    
+
     var statusText by remember { mutableStateOf("Idle") }
     var isProcessing by remember { mutableStateOf(false) }
     var mediaInfoText by remember { mutableStateOf("") }
@@ -139,9 +151,9 @@ fun FFmpegScreen() {
                     val formatText = formatStr?.split(",")?.firstOrNull()?.uppercase() ?: "N/A"
 
                     val text = StringBuilder()
-                    text.appendLine("Duration: $durationText\n")
-                    text.appendLine("Format: $formatText\n")
-                    
+                    text.appendLine("Duration: $durationText")
+                    text.appendLine("Format: $formatText")
+
                     val streams = info.getStreams()
                     var videoStreamText = ""
                     var audioStreamText = ""
@@ -154,25 +166,25 @@ fun FFmpegScreen() {
                             val height = stream.getHeight() ?: "?"
                             val bitrate = formatBitrate(stream.getBitrate())
                             val colorSpace = stream.getStringProperty("color_space")
-                            
+
                             val components = mutableListOf<String>()
                             components.add("$codec (${width}x${height})")
                             if (bitrate != null) components.add(bitrate)
                             if (colorSpace != null) components.add(colorSpace)
-                            
+
                             videoStreamText = components.joinToString(" • ")
                         } else if (stream.getType() == "audio") {
                             val codec = stream.getCodec()?.uppercase() ?: "Unknown"
                             val bitrate = formatBitrate(stream.getBitrate())
-                            
+
                             val components = mutableListOf<String>()
                             components.add(codec)
                             if (bitrate != null) components.add(bitrate)
-                            
+
                             audioStreamText = components.joinToString(" • ")
                         }
                     }
-                    if (videoStreamText.isNotEmpty()) text.appendLine("Video: $videoStreamText\n")
+                    if (videoStreamText.isNotEmpty()) text.appendLine("Video: $videoStreamText")
                     if (audioStreamText.isNotEmpty()) text.appendLine("Audio: $audioStreamText")
 
                     mediaInfoText = text.toString().trim()
@@ -194,188 +206,252 @@ fun FFmpegScreen() {
             outputFileName = getPathFromUri(context, uri)
         }
     }
+    
+    val canRun = inputUri != null && outputUri != null && userTypedFilename.isNotBlank() && !isProcessing
+    val runFfmpegAction = {
+        val currentInputUri = inputUri
+        val currentOutputUri = outputUri
+        if (currentInputUri != null && currentOutputUri != null) {
+            isProcessing = true
+            currentProgress = 0f
+            statusText = "Processing..."
+            val inputSafUrl = FFmpegKitConfig.getSafParameterForRead(context, currentInputUri)
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .safeDrawingPadding()
-    ) {
+            val dir = DocumentFile.fromTreeUri(context, currentOutputUri)
+            val newFile = dir?.createFile("video/mp4", userTypedFilename)
+            if (newFile != null) {
+                val outputSafUrl = FFmpegKitConfig.getSafParameterForWrite(context, newFile.uri)
+                val command = buildFfmpegCommand(trimStartTime, trimEndTime, inputSafUrl, outputSafUrl)
+
+                FFmpegKit.executeAsync(
+                    command,
+                    { session ->
+                        val returnCode = session.getReturnCode()
+                        if (ReturnCode.isSuccess(returnCode)) {
+                            statusText = "Completed"
+                        } else if (ReturnCode.isCancel(returnCode)) {
+                            statusText = "Cancelled"
+                        } else {
+                            statusText = "Failed (Code: ${returnCode?.value})"
+                            Log.e("FFmpegApp", "FFmpeg process failed with rc: ${returnCode?.value}")
+                            Log.e("FFmpegApp", "Fail Stack Trace: ${session.getFailStackTrace()}")
+                            Log.e("FFmpegApp", "Output Logs: \n${session.getAllLogsAsString()}")
+                        }
+                        isProcessing = false
+                    },
+                    { log -> },
+                    { statistics ->
+                        val timeInMilliseconds = statistics.time.toFloat()
+                        if (timeInMilliseconds > 0f && mediaDuration > 0f) {
+                            val timeInSeconds = timeInMilliseconds / 1000f
+                            currentProgress = (timeInSeconds / mediaDuration).coerceIn(0f, 1f)
+                        }
+                    }
+                )
+            } else {
+                isProcessing = false
+                statusText = "Failed to create output file"
+            }
+        }
+    }
+
+    Scaffold(
+        topBar = {
+            CenterAlignedTopAppBar(
+                title = { Text("FFmpeg Video Trimmer") }
+            )
+        },
+        floatingActionButton = {
+            ExtendedFloatingActionButton(
+                onClick = {
+                    if (canRun) runFfmpegAction()
+                },
+                icon = { Icon(Icons.Default.PlayArrow, contentDescription = "Run") },
+                text = { Text("Run FFmpeg") },
+                expanded = true,
+                containerColor = if (canRun) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                contentColor = if (canRun) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        },
+        modifier = Modifier.fillMaxSize()
+    ) { innerPadding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(16.dp)
+                .padding(innerPadding)
                 .imePadding()
+                .padding(horizontal = 16.dp)
                 .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Top
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            Spacer(modifier = Modifier.height(16.dp))
-            Button(onClick = { inputLauncher.launch(arrayOf("video/*")) }) {
-                Text("Select Input Video")
-            }
-            Text(
-                text = inputFileName?.let { "File: $it" } ?: "No input selected",
-                modifier = Modifier.padding(bottom = 8.dp)
-            )
-            
-            if (mediaInfoText.isNotEmpty()) {
-                Text(
-                    text = "File Information",
-                    style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier
-                        .padding(bottom = 8.dp)
-                        .align(Alignment.Start)
-                )
-                Surface(
-                    color = MaterialTheme.colorScheme.surfaceVariant,
-                    shape = MaterialTheme.shapes.medium,
-                    modifier = Modifier
-                        .padding(bottom = 16.dp)
-                        .fillMaxWidth()
-                ) {
-                    Text(
-                        text = mediaInfoText,
-                        modifier = Modifier.padding(12.dp),
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
-            } else {
-                Spacer(modifier = Modifier.height(16.dp))
-            }
+            Spacer(modifier = Modifier.height(8.dp))
 
-            // Trim Video Section
-            Row(
-                modifier = Modifier
-                    .clickable { isTrimExpanded = !isTrimExpanded }
-                    .padding(8.dp),
-                verticalAlignment = Alignment.CenterVertically
+            // 1. Input Section
+            ElevatedCard(
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Text("Trim Video", style = MaterialTheme.typography.titleMedium)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = if (isTrimExpanded) "▲" else "▼",
-                    style = MaterialTheme.typography.titleMedium
-                )
-            }
-            AnimatedVisibility(visible = isTrimExpanded) {
-                Surface(
-                    color = MaterialTheme.colorScheme.surfaceVariant,
-                    shape = MaterialTheme.shapes.medium,
-                    modifier = Modifier
-                        .padding(bottom = 16.dp)
-                        .fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier.padding(12.dp).fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(16.dp)
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Button(
+                        onClick = { inputLauncher.launch(arrayOf("video/*")) },
+                        enabled = !isProcessing,
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Box(modifier = Modifier.weight(1f)) {
-                            CustomTrimTextField(
-                                value = trimStartTime,
-                                onValueChange = { trimStartTime = it },
-                                label = "Start time:"
-                            )
-                        }
-                        Box(modifier = Modifier.weight(1f)) {
-                            CustomTrimTextField(
-                                value = trimEndTime,
-                                onValueChange = { trimEndTime = it },
-                                label = "End time:"
-                            )
-                        }
+                        Icon(Icons.Default.Movie, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Select Input Video")
+                    }
+                    if (inputFileName != null) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "File: $inputFileName",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Button(onClick = { outputLauncher.launch(null) }) {
-                Text("Choose Output Directory")
+            // 2. Media Info Section
+            if (mediaInfoText.isNotEmpty()) {
+                ElevatedCard(
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Info, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("File Information", style = MaterialTheme.typography.titleMedium)
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = mediaInfoText,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
             }
-            Text(
-                text = outputFileName?.let { "Dir: $it" } ?: "No output selected",
-                modifier = Modifier.padding(bottom = 8.dp)
-            )
-            OutlinedTextField(
-                value = userTypedFilename,
-                onValueChange = { userTypedFilename = it },
-                label = { Text("Output Filename") },
-                modifier = Modifier.padding(bottom = 16.dp)
-            )
 
-            Button(
-                onClick = {
-                    val currentInputUri = inputUri
-                    val currentOutputUri = outputUri
-                    if (currentInputUri != null && currentOutputUri != null) {
-                        isProcessing = true
-                        currentProgress = 0f
-                        statusText = "Processing..."
-                        val inputSafUrl = FFmpegKitConfig.getSafParameterForRead(context, currentInputUri)
-                        
-                        val dir = DocumentFile.fromTreeUri(context, currentOutputUri)
-                        val newFile = dir?.createFile("video/mp4", userTypedFilename)
-                        if (newFile != null) {
-                            val outputSafUrl = FFmpegKitConfig.getSafParameterForWrite(context, newFile.uri)
-                            val command = buildFfmpegCommand(trimStartTime, trimEndTime, inputSafUrl, outputSafUrl)
-
-                            FFmpegKit.executeAsync(
-                            command,
-                            { session ->
-                                val returnCode = session.getReturnCode()
-                                if (ReturnCode.isSuccess(returnCode)) {
-                                    statusText = "Completed"
-                                } else if (ReturnCode.isCancel(returnCode)) {
-                                    statusText = "Cancelled"
-                                } else {
-                                    statusText = "Failed (Code: ${returnCode?.value})"
-                                    Log.e("FFmpegApp", "FFmpeg process failed with rc: ${returnCode?.value}")
-                                    Log.e("FFmpegApp", "Fail Stack Trace: ${session.getFailStackTrace()}")
-                                    Log.e("FFmpegApp", "Output Logs: \n${session.getAllLogsAsString()}")
+            // 3. Trim Video Section
+            ElevatedCard(
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(enabled = !isProcessing) { isTrimExpanded = !isTrimExpanded },
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.ContentCut, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Trim Video", style = MaterialTheme.typography.titleMedium)
+                        }
+                        Icon(
+                            imageVector = if (isTrimExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                            contentDescription = null
+                        )
+                    }
+                    AnimatedVisibility(visible = isTrimExpanded) {
+                        Column {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(16.dp)
+                            ) {
+                                Box(modifier = Modifier.weight(1f)) {
+                                    CustomTrimTextField(
+                                        value = trimStartTime,
+                                        onValueChange = { if (!isProcessing) trimStartTime = it },
+                                        label = "Start time:",
+                                        enabled = !isProcessing
+                                    )
                                 }
-                                isProcessing = false
-                            },
-                            { log -> },
-                            { statistics ->
-                                val timeInMilliseconds = statistics.time.toFloat()
-                                if (timeInMilliseconds > 0f && mediaDuration > 0f) {
-                                    val timeInSeconds = timeInMilliseconds / 1000f
-                                    currentProgress = (timeInSeconds / mediaDuration).coerceIn(0f, 1f)
+                                Box(modifier = Modifier.weight(1f)) {
+                                    CustomTrimTextField(
+                                        value = trimEndTime,
+                                        onValueChange = { if (!isProcessing) trimEndTime = it },
+                                        label = "End time:",
+                                        enabled = !isProcessing
+                                    )
                                 }
                             }
-                        )
-                        } else {
-                            isProcessing = false
-                            statusText = "Failed to create output file"
                         }
                     }
-                },
-                enabled = inputUri != null && outputUri != null && userTypedFilename.isNotBlank() && !isProcessing
-            ) {
-                Text("Run FFmpeg")
+                }
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
-            
-            if (isProcessing) {
-                LinearProgressIndicator(
-                    progress = { currentProgress },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 32.dp)
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = "Processing: ${(currentProgress * 100).toInt()}%",
-                    style = MaterialTheme.typography.bodyMedium
-                )
-            } else {
-                Text(
-                    text = "Status: $statusText",
-                    style = MaterialTheme.typography.titleMedium
-                )
+            // 4. Output Settings Section
+            ElevatedCard(
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Settings, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Output Settings", style = MaterialTheme.typography.titleMedium)
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Button(
+                        onClick = { outputLauncher.launch(null) },
+                        enabled = !isProcessing,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.Folder, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Choose Output Directory")
+                    }
+                    if (outputFileName != null) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Dir: $outputFileName",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
+                    OutlinedTextField(
+                        value = userTypedFilename,
+                        onValueChange = { if (!isProcessing) userTypedFilename = it },
+                        label = { Text("Output Filename") },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !isProcessing
+                    )
+                }
             }
-            Spacer(modifier = Modifier.height(32.dp))
+
+            // Status & Progress Section
+            if (isProcessing) {
+                ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        LinearProgressIndicator(
+                            progress = { currentProgress },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Processing: ${(currentProgress * 100).toInt()}%",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                }
+            } else if (statusText != "Idle") {
+                ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            text = "Status: $statusText",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(80.dp)) // padding for the FAB at the bottom
         }
     }
 }
@@ -390,7 +466,7 @@ fun formatDuration(durationSec: Float): String {
     val h = (durationSec / 3600).toInt()
     val m = ((durationSec % 3600) / 60).toInt()
     val s = durationSec % 60
-    
+
     return if (h > 0) {
         String.format(java.util.Locale.US, "%d:%02d:%06.3f", h, m, s)
     } else {
@@ -409,7 +485,7 @@ fun getPathFromUri(context: Context, uri: Uri): String {
             }
             return treeId
         }
-        
+
         // 2. Handle File (Document) URIs
         if (DocumentsContract.isDocumentUri(context, uri)) {
             val docId = DocumentsContract.getDocumentId(uri)
@@ -418,13 +494,13 @@ fun getPathFromUri(context: Context, uri: Uri): String {
                 return "Main Storage/" + split[1]
             }
         }
-        
+
         // 3. Fallback for raw paths or basic content URIs
         val path = uri.path ?: return uri.toString()
         if (path.contains("/storage/emulated/0/")) {
             return path.replace(Regex(".*storage/emulated/0/"), "Main Storage/")
         }
-        
+
         return uri.toString()
     } catch (e: Exception) {
         e.printStackTrace()
