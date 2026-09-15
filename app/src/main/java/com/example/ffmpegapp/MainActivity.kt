@@ -64,7 +64,7 @@ fun CustomTrimTextField(
             value = value,
             onValueChange = onValueChange,
             interactionSource = interactionSource,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
             modifier = Modifier
                 .fillMaxWidth()
                 .styleable(styleState, ComponentStyles.inputFieldStyle, Style)
@@ -109,7 +109,6 @@ fun FFmpegScreen() {
     var statusText by remember { mutableStateOf("Idle") }
     var isProcessing by remember { mutableStateOf(false) }
     var mediaInfoText by remember { mutableStateOf("") }
-    var isMediaInfoExpanded by remember { mutableStateOf(false) }
     var mediaDuration by remember { mutableStateOf(0f) }
     var currentProgress by remember { mutableStateOf(0f) }
 
@@ -129,7 +128,7 @@ fun FFmpegScreen() {
                     val durationFloat = durationStr?.toFloatOrNull()
                     val durationText = if (durationFloat != null) {
                         mediaDuration = durationFloat
-                        String.format(java.util.Locale.US, "%.2f s", durationFloat)
+                        formatDuration(durationFloat)
                     } else {
                         mediaDuration = 0f
                         "N/A"
@@ -219,31 +218,25 @@ fun FFmpegScreen() {
             )
             
             if (mediaInfoText.isNotEmpty()) {
-                Row(
+                Text(
+                    text = "File Information",
+                    style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier
-                        .clickable { isMediaInfoExpanded = !isMediaInfoExpanded }
-                        .padding(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                        .padding(bottom = 8.dp)
+                        .align(Alignment.Start)
+                )
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    shape = MaterialTheme.shapes.medium,
+                    modifier = Modifier
+                        .padding(bottom = 16.dp)
+                        .fillMaxWidth()
                 ) {
-                    Text("File Information", style = MaterialTheme.typography.titleMedium)
-                    Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = if (isMediaInfoExpanded) "▲" else "▼",
-                        style = MaterialTheme.typography.titleMedium
+                        text = mediaInfoText,
+                        modifier = Modifier.padding(12.dp),
+                        style = MaterialTheme.typography.bodySmall
                     )
-                }
-                AnimatedVisibility(visible = isMediaInfoExpanded) {
-                    Surface(
-                        color = MaterialTheme.colorScheme.surfaceVariant,
-                        shape = MaterialTheme.shapes.medium,
-                        modifier = Modifier.padding(bottom = 16.dp)
-                    ) {
-                        Text(
-                            text = mediaInfoText,
-                            modifier = Modifier.padding(12.dp),
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    }
                 }
             } else {
                 Spacer(modifier = Modifier.height(16.dp))
@@ -267,19 +260,28 @@ fun FFmpegScreen() {
                 Surface(
                     color = MaterialTheme.colorScheme.surfaceVariant,
                     shape = MaterialTheme.shapes.medium,
-                    modifier = Modifier.padding(bottom = 16.dp)
+                    modifier = Modifier
+                        .padding(bottom = 16.dp)
+                        .fillMaxWidth()
                 ) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        CustomTrimTextField(
-                            value = trimStartTime,
-                            onValueChange = { trimStartTime = it },
-                            label = "Start time:"
-                        )
-                        CustomTrimTextField(
-                            value = trimEndTime,
-                            onValueChange = { trimEndTime = it },
-                            label = "End time:"
-                        )
+                    Row(
+                        modifier = Modifier.padding(12.dp).fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        Box(modifier = Modifier.weight(1f)) {
+                            CustomTrimTextField(
+                                value = trimStartTime,
+                                onValueChange = { trimStartTime = it },
+                                label = "Start time:"
+                            )
+                        }
+                        Box(modifier = Modifier.weight(1f)) {
+                            CustomTrimTextField(
+                                value = trimEndTime,
+                                onValueChange = { trimEndTime = it },
+                                label = "End time:"
+                            )
+                        }
                     }
                 }
             }
@@ -381,6 +383,18 @@ fun buildFfmpegCommand(startTime: String, endTime: String, inputUrl: String, out
     val ssPart = if (startTime.isNotBlank()) "-ss $startTime " else ""
     val toPart = if (endTime.isNotBlank()) "-to $endTime " else ""
     return "$ssPart$toPart-i $inputUrl -c:v libx264 -y $outputUrl"
+}
+
+fun formatDuration(durationSec: Float): String {
+    val h = (durationSec / 3600).toInt()
+    val m = ((durationSec % 3600) / 60).toInt()
+    val s = durationSec % 60
+    
+    return if (h > 0) {
+        String.format(java.util.Locale.US, "%d:%02d:%06.3f", h, m, s)
+    } else {
+        String.format(java.util.Locale.US, "%d:%06.3f", m, s)
+    }
 }
 
 fun getPathFromUri(context: Context, uri: Uri): String {
