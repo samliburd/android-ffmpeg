@@ -237,7 +237,7 @@ fun FFmpegScreen(viewModel: MainScreenViewModel) {
     }
 
     val outputLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.CreateDocument("video/mp4")
+        contract = CreateDocumentWithInitialUri()
     ) { uri: Uri? ->
         viewModel.onDirectorySelected(uri, context)
     }
@@ -423,7 +423,7 @@ fun FFmpegScreen(viewModel: MainScreenViewModel) {
                     }
                     Spacer(modifier = Modifier.height(16.dp))
                     Button(
-                        onClick = { outputLauncher.launch("output.mp4") },
+                        onClick = { outputLauncher.launch(Pair("output.mp4", inputUri)) },
                         enabled = !isProcessing,
                         modifier = Modifier.fillMaxWidth()
                     ) {
@@ -525,6 +525,24 @@ fun getPathFromUri(context: Context, uri: Uri): String {
     } catch (e: Exception) {
         e.printStackTrace()
         return "Unknown Path"
+    }
+}
+
+class CreateDocumentWithInitialUri : androidx.activity.result.contract.ActivityResultContract<Pair<String, Uri?>, Uri?>() {
+    override fun createIntent(context: Context, input: Pair<String, Uri?>): Intent {
+        val intent = Intent(Intent.ACTION_CREATE_DOCUMENT)
+            .setType("video/mp4")
+            .putExtra(Intent.EXTRA_TITLE, input.first)
+        input.second?.let {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                intent.putExtra(DocumentsContract.EXTRA_INITIAL_URI, it)
+            }
+        }
+        return intent
+    }
+
+    override fun parseResult(resultCode: Int, intent: Intent?): Uri? {
+        return intent.takeIf { resultCode == android.app.Activity.RESULT_OK }?.data
     }
 }
 
