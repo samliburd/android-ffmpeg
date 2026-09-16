@@ -41,6 +41,13 @@ class MainScreenViewModel(private val dataRepository: DataRepository) : ViewMode
       _outputDirectoryUri.value = null
     }
   }
+
+  private val _sharedInputUri = MutableStateFlow<Uri?>(null)
+  val sharedInputUri: StateFlow<Uri?> = _sharedInputUri.asStateFlow()
+
+  fun setSharedInputUri(uri: Uri?) {
+    _sharedInputUri.value = uri
+  }
 }
 
 sealed interface MainScreenUiState {

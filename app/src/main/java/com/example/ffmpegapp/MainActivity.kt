@@ -1,6 +1,7 @@
 package com.example.ffmpegapp
 
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.provider.DocumentsContract
@@ -91,8 +92,18 @@ fun CustomTrimTextField(
 }
 
 class MainActivity : ComponentActivity() {
+    private lateinit var viewModel: MainScreenViewModel
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        viewModel = androidx.lifecycle.ViewModelProvider(this, object : androidx.lifecycle.ViewModelProvider.Factory {
+            override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
+                return MainScreenViewModel(com.example.ffmpegapp.data.DefaultDataRepository(applicationContext)) as T
+            }
+        })[MainScreenViewModel::class.java]
+
+        handleSendIntent(intent)
+
         enableEdgeToEdge()
         setContent {
             MaterialTheme {
@@ -100,8 +111,23 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    FFmpegScreen()
+                    FFmpegScreen(viewModel)
                 }
+            }
+        }
+    }
+
+    override fun onNewIntent(newIntent: Intent) {
+        super.onNewIntent(newIntent)
+        intent = newIntent
+        handleSendIntent(newIntent)
+    }
+
+    private fun handleSendIntent(intent: Intent?) {
+        if (intent?.action == Intent.ACTION_SEND) {
+            val uri = androidx.core.content.IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)
+            if (uri != null) {
+                viewModel.setSharedInputUri(uri)
             }
         }
     }
@@ -109,9 +135,8 @@ class MainActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun FFmpegScreen() {
+fun FFmpegScreen(viewModel: MainScreenViewModel) {
     val context = LocalContext.current
-    val viewModel: MainScreenViewModel = viewModel { MainScreenViewModel(DefaultDataRepository(context.applicationContext)) }
     val coroutineScope = rememberCoroutineScope()
 
     var inputUri by remember { mutableStateOf<Uri?>(null) }
@@ -129,9 +154,10 @@ fun FFmpegScreen() {
     var mediaDuration by remember { mutableStateOf(0f) }
     var currentProgress by remember { mutableStateOf(0f) }
 
-    val inputLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
-    ) { uri: Uri? ->
+    val sharedInputUri by viewModel.sharedInputUri.collectAsStateWithLifecycle()
+
+    LaunchedEffect(sharedInputUri) {
+        val uri = sharedInputUri
         inputUri = uri
         if (uri != null) {
             inputFileName = getPathFromUri(context, uri)
@@ -198,8 +224,16 @@ fun FFmpegScreen() {
                 }
             }
         } else {
+            inputFileName = null
             mediaInfoText = ""
+            mediaDuration = 0f
         }
+    }
+
+    val inputLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        viewModel.setSharedInputUri(uri)
     }
 
     val outputLauncher = rememberLauncherForActivityResult(
